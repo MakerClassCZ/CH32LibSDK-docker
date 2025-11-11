@@ -1,0 +1,141 @@
+# CH32LibSDK Development Container - Clang + libgcc
+# Recommended container with LLVM Clang 19 + GCC libgcc runtime
+#
+# Features:
+# - Clang/LLVM 19.1.7 with rv32ec_xwchc experimental support
+# - GCC WCH sysroot + libgcc runtime
+# - LLD linker (2-3x faster than GNU ld)
+# - LTO (Link Time Optimization) support
+# - Modern tooling: clangd, clang-tidy, better diagnostics
+# - CH32LibSDK with LLD patches
+# - Inherits base system, SDK, and tools from base image
+# - Size: base + ~1200 MB (LLVM + WCH toolchain)
+#
+# Build from: makerclasscz/ch32libsdk:base
+
+FROM ch32libsdk:base
+
+# ============================================================================
+# Build Arguments & Metadata
+# ============================================================================
+
+ARG VERSION
+ARG VCS_REF
+ARG BUILD_DATE
+
+LABEL org.opencontainers.image.title="CH32LibSDK Clang+libgcc Container" \
+      org.opencontainers.image.description="CH32LibSDK with Clang 19 + libgcc (recommended)" \
+      org.opencontainers.image.source="https://github.com/makerclasscz/CH32LibSDK-docker" \
+      org.opencontainers.image.url="https://github.com/makerclasscz/CH32LibSDK-docker" \
+      org.opencontainers.image.documentation="https://github.com/makerclasscz/CH32LibSDK-docker#readme" \
+      org.opencontainers.image.licenses="MIT" \
+      org.opencontainers.image.vendor="MakerClass.cz" \
+      org.opencontainers.image.authors="Vladimír Smitka <vlada@makerclass.cz>, MakerClass.cz" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${VCS_REF}" \
+      org.opencontainers.image.created="${BUILD_DATE}" \
+      toolchain="clang-19-libgcc"
+
+# ============================================================================
+# Install LLVM/Clang 19
+# ============================================================================
+
+# Install LLVM 19 from official apt repository
+RUN wget https://apt.llvm.org/llvm.sh && \
+    chmod +x llvm.sh && \
+    ./llvm.sh 19 && \
+    rm llvm.sh && \
+    apt-get install -y lld-19
+
+# Verify Clang installation
+RUN clang-19 --version && \
+    /usr/lib/llvm-19/bin/ld.lld --version
+
+# Create symlinks for easier access
+RUN update-alternatives --install /usr/bin/clang clang /usr/lib/llvm-19/bin/clang 100 && \
+    update-alternatives --install /usr/bin/clang++ clang++ /usr/lib/llvm-19/bin/clang++ 100 && \
+    update-alternatives --install /usr/bin/lld lld /usr/lib/llvm-19/bin/lld 100 && \
+    update-alternatives --install /usr/bin/llvm-objcopy llvm-objcopy /usr/lib/llvm-19/bin/llvm-objcopy 100 && \
+    update-alternatives --install /usr/bin/llvm-objdump llvm-objdump /usr/lib/llvm-19/bin/llvm-objdump 100 && \
+    update-alternatives --install /usr/bin/llvm-size llvm-size /usr/lib/llvm-19/bin/llvm-size 100 && \
+    update-alternatives --install /usr/bin/llvm-nm llvm-nm /usr/lib/llvm-19/bin/llvm-nm 100 && \
+    update-alternatives --install /usr/bin/llvm-readelf llvm-readelf /usr/lib/llvm-19/bin/llvm-readelf 100
+
+# ============================================================================
+# Install WCH RISC-V GCC Toolchain (for sysroot + libgcc)
+# ============================================================================
+
+# Copy and install WCH GCC toolchain from local file (for sysroot + libgcc)
+COPY wch-toolchain.tar.gz /tmp/wch-toolchain.tar.gz
+RUN echo "Installing WCH RISC-V GCC toolchain for sysroot..." && \
+    mkdir -p /opt/wch-toolchain && \
+    tar -xzf /tmp/wch-toolchain.tar.gz -C /opt/wch-toolchain --strip-components=1 && \
+    rm /tmp/wch-toolchain.tar.gz && \
+    echo "WCH toolchain installed to /opt/wch-toolchain (used for sysroot)"
+
+# Verify sysroot and libgcc
+RUN echo "=== Verifying GCC sysroot ===" && \
+    ls -la /opt/wch-toolchain/riscv-wch-elf/lib/rv32ec/ilp32e/ && \
+    ls -la /opt/wch-toolchain/lib/gcc/riscv-wch-elf/12.2.0/rv32ec/ilp32e/libgcc.a && \
+    echo "=========================="
+
+# ============================================================================
+# Environment Configuration
+# ============================================================================
+
+# Add both toolchains to PATH (LLVM first, GCC second for fallback)
+ENV PATH="/usr/lib/llvm-19/bin:/opt/wch-toolchain/bin:${PATH}"
+
+# Toolchain identifier (overrides base)
+ENV CH32_TOOLCHAIN="CLANG_LIBGCC"
+
+# Clang specific paths
+ENV CLANG_PATH="/usr/lib/llvm-19/bin"
+
+# GCC sysroot (for libc, libm, libgcc)
+ENV GCC_CH32_SYSROOT="/opt/wch-toolchain/riscv-wch-elf"
+
+# Standard compiler environment variables (for devcontainer & build tools)
+ENV CC="/usr/lib/llvm-19/bin/clang"
+ENV CXX="/usr/lib/llvm-19/bin/clang++"
+
+# CMake toolchain file for this variant
+ENV CH32_CMAKE_TOOLCHAIN="/opt/cmake-toolchains/toolchain-clang19-libgcc.cmake"
+
+# ============================================================================
+# Info Message
+# ============================================================================
+
+RUN echo '#!/bin/bash' > /usr/local/bin/ch32-info && \
+    echo 'echo "============================================"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "CH32LibSDK - Clang + libgcc"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "============================================"' >> /usr/local/bin/ch32-info && \
+    echo 'echo ""' >> /usr/local/bin/ch32-info && \
+    echo 'echo "Compiler: Clang/LLVM 19.1.7"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "Target: RISC-V rv32ec_xwchc (ilp32e ABI)"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "Runtime: GCC libgcc (from WCH toolchain)"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "Linker: LLD 19 (LLVM linker)"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "SDK: $CH32_SDK_PATH (with LLD patches)"' >> /usr/local/bin/ch32-info && \
+    echo 'echo ""' >> /usr/local/bin/ch32-info && \
+    echo 'echo "Features:"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "  ✅ LTO (Link Time Optimization)"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "  ✅ Fast LLD linker"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "  ✅ Modern tooling (clangd, clang-tidy)"' >> /usr/local/bin/ch32-info && \
+    echo 'echo ""' >> /usr/local/bin/ch32-info && \
+    echo 'echo "Available commands:"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "  clang                - Clang C compiler"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "  lld                  - LLVM linker"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "  llvm-objcopy         - LLVM objcopy"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "  llvm-size            - LLVM size tool"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "  riscv-wch-elf-gcc    - GCC (for sysroot)"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "  minichlink           - Fast WCH programmer"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "  openocd              - OpenOCD programmer"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "  cmake, ninja         - Build systems"' >> /usr/local/bin/ch32-info && \
+    echo 'echo ""' >> /usr/local/bin/ch32-info && \
+    echo 'echo "Toolchain file:"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "  $CMAKE_TOOLCHAIN_PATH/toolchain-clang19-libgcc.cmake"' >> /usr/local/bin/ch32-info && \
+    echo 'echo ""' >> /usr/local/bin/ch32-info && \
+    echo 'echo "============================================"' >> /usr/local/bin/ch32-info && \
+    chmod +x /usr/local/bin/ch32-info
+
+CMD ["/bin/bash"]

@@ -1,0 +1,100 @@
+# CH32LibSDK Development Container - GCC WCH Toolchain
+# Official WCH RISC-V GCC toolchain variant
+#
+# Features:
+# - GCC WCH 12.2.0 with rv32ecxw support
+# - Inherits base system, SDK, and tools from base image
+# - Size: base + ~300 MB (toolchain)
+#
+# Build from: makerclasscz/ch32libsdk:base
+
+FROM ch32libsdk:base
+
+# ============================================================================
+# Build Arguments & Metadata
+# ============================================================================
+
+ARG VERSION
+ARG VCS_REF
+ARG BUILD_DATE
+
+LABEL org.opencontainers.image.title="CH32LibSDK GCC WCH Container" \
+      org.opencontainers.image.description="CH32LibSDK with GCC WCH 12.2.0 Toolchain" \
+      org.opencontainers.image.source="https://github.com/makerclasscz/CH32LibSDK-docker" \
+      org.opencontainers.image.url="https://github.com/makerclasscz/CH32LibSDK-docker" \
+      org.opencontainers.image.documentation="https://github.com/makerclasscz/CH32LibSDK-docker#readme" \
+      org.opencontainers.image.licenses="MIT" \
+      org.opencontainers.image.vendor="MakerClass.cz" \
+      org.opencontainers.image.authors="Vladimír Smitka <vlada@makerclass.cz>, MakerClass.cz" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${VCS_REF}" \
+      org.opencontainers.image.created="${BUILD_DATE}" \
+      toolchain="gcc-wch-12.2.0"
+
+# ============================================================================
+# Install WCH RISC-V GCC Toolchain
+# ============================================================================
+
+# Copy and install minimal WCH GCC toolchain
+COPY wch-toolchain.tar.gz /tmp/wch-toolchain.tar.gz
+RUN echo "Installing WCH RISC-V GCC toolchain..." && \
+    mkdir -p /opt/wch-toolchain && \
+    tar -xzf /tmp/wch-toolchain.tar.gz -C /opt/wch-toolchain --strip-components=1 && \
+    rm /tmp/wch-toolchain.tar.gz && \
+    echo "WCH toolchain installed to /opt/wch-toolchain"
+
+# Verify toolchain installation
+RUN /opt/wch-toolchain/bin/riscv-wch-elf-gcc --version
+
+
+# ============================================================================
+# Environment Configuration
+# ============================================================================
+
+# Add toolchain to PATH
+ENV PATH="/opt/wch-toolchain/bin:${PATH}"
+
+# Toolchain identifier for CMake (overrides base)
+ENV CH32_TOOLCHAIN="GCC"
+
+# GCC specific paths
+ENV GCC_CH32_PATH="/opt/wch-toolchain/bin"
+ENV GCC_CH32_SYSROOT="/opt/wch-toolchain/riscv-wch-elf"
+
+# Standard compiler environment variables
+ENV CC="/opt/wch-toolchain/bin/riscv-wch-elf-gcc"
+ENV CXX="/opt/wch-toolchain/bin/riscv-wch-elf-g++"
+
+# CMake toolchain file for this variant
+ENV CH32_CMAKE_TOOLCHAIN="/opt/cmake-toolchains/toolchain-gcc-wch.cmake"
+
+# ============================================================================
+# Info Message (override base)
+# ============================================================================
+
+RUN echo '#!/bin/bash' > /usr/local/bin/ch32-info && \
+    echo 'echo "========================================"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "CH32LibSDK - GCC WCH Toolchain"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "========================================"' >> /usr/local/bin/ch32-info && \
+    echo 'echo ""' >> /usr/local/bin/ch32-info && \
+    echo 'echo "Toolchain: GCC WCH 12.2.0"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "Target: RISC-V rv32ecxw (ilp32e ABI)"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "SDK: $CH32_SDK_PATH"' >> /usr/local/bin/ch32-info && \
+    echo 'echo ""' >> /usr/local/bin/ch32-info && \
+    echo 'echo "Available commands:"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "  riscv-wch-elf-gcc    - GCC compiler"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "  minichlink           - Fast WCH programmer"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "  openocd              - OpenOCD programmer"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "  cmake                - CMake build system"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "  ninja                - Ninja build system"' >> /usr/local/bin/ch32-info && \
+    echo 'echo ""' >> /usr/local/bin/ch32-info && \
+    echo 'echo "Toolchain file:"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "  $CMAKE_TOOLCHAIN_PATH/toolchain-gcc-wch.cmake"' >> /usr/local/bin/ch32-info && \
+    echo 'echo ""' >> /usr/local/bin/ch32-info && \
+    echo 'echo "This is the official WCH toolchain variant."' >> /usr/local/bin/ch32-info && \
+    echo 'echo "Recommended for maximum compatibility."' >> /usr/local/bin/ch32-info && \
+    echo 'echo ""' >> /usr/local/bin/ch32-info && \
+    echo 'echo "========================================"' >> /usr/local/bin/ch32-info && \
+    chmod +x /usr/local/bin/ch32-info
+
+CMD ["/bin/bash"]

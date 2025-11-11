@@ -1,0 +1,226 @@
+# CH32LibSDK Development Container - Clang + compiler-rt + xPack
+# Pure LLVM container with LLVM compiler-rt builtins + xPack sysroot
+#
+# Features:
+# - Clang/LLVM 19.1.7 with rv32ec_xwchc experimental support
+# - LLVM compiler-rt builtins (pure LLVM, no GCC libgcc)
+# - xPack RISC-V GCC 14.2.0-3 sysroot (newlib + libm for rv32ec/ilp32e)
+# - LLD linker (faster than GNU ld)
+# - Pure LLVM ecosystem
+# - NO WCH toolchain dependency
+# - Size: base + ~4 GB (LLVM + compiler-rt + xPack sysroot)
+#
+# Build from: ch32libsdk:base
+# Adds: LLVM/Clang 19, compiler-rt builtins, xPack sysroot
+
+FROM ch32libsdk:base
+
+# ============================================================================
+# Build Arguments & Metadata
+# ============================================================================
+
+ARG VERSION
+ARG VCS_REF
+ARG BUILD_DATE
+
+LABEL org.opencontainers.image.title="CH32LibSDK Clang+compiler-rt Container" \
+      org.opencontainers.image.description="CH32LibSDK with pure LLVM stack (Clang 19 + compiler-rt + xPack)" \
+      org.opencontainers.image.source="https://github.com/makerclasscz/CH32LibSDK-docker" \
+      org.opencontainers.image.url="https://github.com/makerclasscz/CH32LibSDK-docker" \
+      org.opencontainers.image.documentation="https://github.com/makerclasscz/CH32LibSDK-docker#readme" \
+      org.opencontainers.image.licenses="MIT" \
+      org.opencontainers.image.vendor="MakerClass.cz" \
+      org.opencontainers.image.authors="Vladimír Smitka <vlada@makerclass.cz>, MakerClass.cz" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${VCS_REF}" \
+      org.opencontainers.image.created="${BUILD_DATE}" \
+      toolchain="clang-19-compiler-rt" \
+      compiler-rt="LLVM 19.x builtins for rv32ec" \
+      sysroot="xPack RISC-V GCC 14.2.0-3 (rv32ec/ilp32e)"
+
+# ============================================================================
+# Install LLVM/Clang 19
+# ============================================================================
+
+# Install LLVM 19 from official apt repository
+RUN wget https://apt.llvm.org/llvm.sh && \
+    chmod +x llvm.sh && \
+    ./llvm.sh 19 && \
+    rm llvm.sh && \
+    apt-get install -y lld-19
+
+# Verify Clang installation
+RUN clang-19 --version && \
+    /usr/lib/llvm-19/bin/ld.lld --version
+
+# Create symlinks for easier access
+RUN update-alternatives --install /usr/bin/clang clang /usr/lib/llvm-19/bin/clang 100 && \
+    update-alternatives --install /usr/bin/clang++ clang++ /usr/lib/llvm-19/bin/clang++ 100 && \
+    update-alternatives --install /usr/bin/lld lld /usr/lib/llvm-19/bin/lld 100 && \
+    update-alternatives --install /usr/bin/llvm-objcopy llvm-objcopy /usr/lib/llvm-19/bin/llvm-objcopy 100 && \
+    update-alternatives --install /usr/bin/llvm-objdump llvm-objdump /usr/lib/llvm-19/bin/llvm-objdump 100 && \
+    update-alternatives --install /usr/bin/llvm-size llvm-size /usr/lib/llvm-19/bin/llvm-size 100 && \
+    update-alternatives --install /usr/bin/llvm-nm llvm-nm /usr/lib/llvm-19/bin/llvm-nm 100 && \
+    update-alternatives --install /usr/bin/llvm-readelf llvm-readelf /usr/lib/llvm-19/bin/llvm-readelf 100
+
+# ============================================================================
+# Install xPack RISC-V GCC for Sysroot (newlib + libm)
+# ============================================================================
+
+# Download and install xPack RISC-V GCC 14.2.0-3 (with rv32ec/ilp32e multilib)
+RUN echo "Installing xPack RISC-V GCC 14.2.0-3 for sysroot..." && \
+    wget -q -O /tmp/xpack-riscv-gcc.tar.gz \
+        https://github.com/xpack-dev-tools/riscv-none-elf-gcc-xpack/releases/download/v14.2.0-3/xpack-riscv-none-elf-gcc-14.2.0-3-linux-x64.tar.gz && \
+    mkdir -p /opt/xpack-riscv-none-elf-gcc && \
+    tar -xzf /tmp/xpack-riscv-gcc.tar.gz -C /opt/xpack-riscv-none-elf-gcc --strip-components=1 && \
+    rm /tmp/xpack-riscv-gcc.tar.gz && \
+    echo "✓ xPack RISC-V GCC installed successfully"
+
+# Verify xPack installation and multilib support
+RUN echo "=== xPack RISC-V GCC Verification ===" && \
+    /opt/xpack-riscv-none-elf-gcc/bin/riscv-none-elf-gcc --version | head -1 && \
+    echo "--- Available multilibs ---" && \
+    /opt/xpack-riscv-none-elf-gcc/bin/riscv-none-elf-gcc -print-multi-lib | grep rv32ec && \
+    echo "--- rv32ec/ilp32e sysroot check ---" && \
+    ls -lh /opt/xpack-riscv-none-elf-gcc/riscv-none-elf/lib/rv32ec/ilp32e/libc.a && \
+    echo "✓ xPack rv32ec/ilp32e multilib verified" && \
+    echo "=================================="
+
+# Set environment variable for xPack sysroot
+ENV XPACK_SYSROOT="/opt/xpack-riscv-none-elf-gcc/riscv-none-elf"
+
+# ============================================================================
+# Build LLVM compiler-rt for RISC-V rv32ec
+# ============================================================================
+
+WORKDIR /tmp/compiler-rt-build
+
+# Clone LLVM project (release/19.x branch)
+RUN echo "Cloning LLVM project for compiler-rt..." && \
+    git clone --depth 1 --branch release/19.x \
+        https://github.com/llvm/llvm-project.git llvm-project && \
+    echo "LLVM project cloned successfully"
+
+# Create build directory for rv32ec/ilp32e
+RUN mkdir -p build-rv32ec
+
+WORKDIR /tmp/compiler-rt-build/build-rv32ec
+
+# Configure compiler-rt for rv32ec with ilp32e ABI
+# Key settings:
+# - EXCLUDE_ATOMIC_BUILTIN=ON: rv32ec doesn't have atomic instructions
+# - BAREMETAL_BUILD=ON: No OS, bare metal target
+# - BUILD_BUILTINS=ON: Only build builtins library
+# - LTO enabled: Build as LLVM bitcode for LTO compatibility
+RUN echo "Configuring compiler-rt for rv32ec with LTO..." && \
+    cmake ../llvm-project/compiler-rt \
+        -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_SYSTEM_NAME=Generic \
+        -DCMAKE_C_COMPILER=/usr/lib/llvm-19/bin/clang \
+        -DCMAKE_CXX_COMPILER=/usr/lib/llvm-19/bin/clang++ \
+        -DCMAKE_ASM_COMPILER=/usr/lib/llvm-19/bin/clang \
+        -DCMAKE_AR=/usr/lib/llvm-19/bin/llvm-ar \
+        -DCMAKE_RANLIB=/usr/lib/llvm-19/bin/llvm-ranlib \
+        -DCMAKE_C_COMPILER_TARGET="riscv32-unknown-elf" \
+        -DCMAKE_ASM_COMPILER_TARGET="riscv32-unknown-elf" \
+        -DCMAKE_C_FLAGS="-march=rv32ec_xwchc -mabi=ilp32e -menable-experimental-extensions -ffreestanding -nostdlib -Oz -fembed-bitcode" \
+        -DCMAKE_C_FLAGS_RELEASE="-Oz -fembed-bitcode" \
+        -DCMAKE_ASM_FLAGS="-march=rv32ec_xwchc -mabi=ilp32e -menable-experimental-extensions" \
+        -DCMAKE_EXE_LINKER_FLAGS="-nostdlib" \
+        -DCOMPILER_RT_DEFAULT_TARGET_ONLY=ON \
+        -DCOMPILER_RT_BAREMETAL_BUILD=ON \
+        -DCOMPILER_RT_OS_DIR="baremetal" \
+        -DCOMPILER_RT_BUILD_BUILTINS=ON \
+        -DCOMPILER_RT_BUILD_SANITIZERS=OFF \
+        -DCOMPILER_RT_BUILD_XRAY=OFF \
+        -DCOMPILER_RT_BUILD_LIBFUZZER=OFF \
+        -DCOMPILER_RT_BUILD_PROFILE=OFF \
+        -DCOMPILER_RT_BUILD_MEMPROF=OFF \
+        -DCOMPILER_RT_BUILD_ORC=OFF \
+        -DCOMPILER_RT_EXCLUDE_ATOMIC_BUILTIN=ON \
+        -DCMAKE_INSTALL_PREFIX=/usr/lib/llvm-19/lib/clang/19 && \
+    echo "Configuration completed successfully"
+
+# Build compiler-rt builtins
+RUN echo "Building compiler-rt builtins..." && \
+    ninja builtins && \
+    echo "Build completed successfully"
+
+# Install to Clang's resource directory
+RUN echo "Installing compiler-rt to Clang resource directory..." && \
+    ninja install && \
+    echo "Installation completed"
+
+# Verify installation
+RUN echo "=== Compiler-RT Installation ===" && \
+    find /usr/lib/llvm-19/lib/clang/19/lib -name "*builtins*" -o -name "libclang_rt*" | grep riscv32 && \
+    echo "================================"
+
+# Clean up build files to reduce image size
+WORKDIR /
+RUN rm -rf /tmp/compiler-rt-build && \
+    echo "Build files cleaned up"
+
+# ============================================================================
+# Environment Configuration
+# ============================================================================
+
+# Update toolchain identifier
+ENV CH32_TOOLCHAIN="CLANG_COMPILER_RT"
+
+# Clang specific paths
+ENV CLANG_PATH="/usr/lib/llvm-19/bin"
+
+# Add compiler-rt info to environment
+ENV LLVM_COMPILER_RT="/usr/lib/llvm-19/lib/clang/19/lib/baremetal"
+
+# Standard compiler environment variables
+ENV CC="/usr/lib/llvm-19/bin/clang"
+ENV CXX="/usr/lib/llvm-19/bin/clang++"
+
+# CMake toolchain file for this variant
+ENV CH32_CMAKE_TOOLCHAIN="/opt/cmake-toolchains/toolchain-clang19-compiler-rt.cmake"
+
+# ============================================================================
+# Info Message Update
+# ============================================================================
+
+RUN echo '#!/bin/bash' > /usr/local/bin/ch32-info && \
+    echo 'echo "========================================================"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "CH32LibSDK - Clang + compiler-rt + xPack Container"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "========================================================"' >> /usr/local/bin/ch32-info && \
+    echo 'echo ""' >> /usr/local/bin/ch32-info && \
+    echo 'echo "Compiler: Clang/LLVM 19.1.7"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "Target:   RISC-V rv32ec_xwchc (ilp32e ABI)"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "Runtime:  LLVM compiler-rt builtins (pure LLVM)"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "Sysroot:  xPack RISC-V GCC 14.2.0-3 (rv32ec/ilp32e)"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "Linker:   LLD 19 (LLVM linker)"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "SDK:      /opt/CH32LibSDK (patched for LLD)"' >> /usr/local/bin/ch32-info && \
+    echo 'echo ""' >> /usr/local/bin/ch32-info && \
+    echo 'echo "🔬 Pure LLVM + xPack Stack:"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "  ✅ No WCH toolchain dependency"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "  ✅ Full LLVM ecosystem (Clang + LLD + compiler-rt)"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "  ✅ xPack standardized sysroot (newlib)"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "  ✅ LTO with bitcode compiler-rt (same size as libgcc)"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "  ✅ compiler-rt built with rv32ec_xwchc + LTO"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "  ℹ️  xPack libs compiled without xwchc (binary compatible)"' >> /usr/local/bin/ch32-info && \
+    echo 'echo ""' >> /usr/local/bin/ch32-info && \
+    echo 'echo "Available commands:"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "  clang                - Clang C compiler"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "  lld                  - LLVM linker"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "  llvm-objcopy         - LLVM objcopy"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "  llvm-size            - LLVM size tool"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "  minichlink           - Fast WCH programmer"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "  openocd              - OpenOCD programmer"' >> /usr/local/bin/ch32-info && \
+    echo 'echo ""' >> /usr/local/bin/ch32-info && \
+    echo 'echo "Toolchain file:"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "  $CMAKE_TOOLCHAIN_PATH/toolchain-clang19-compiler-rt.cmake"' >> /usr/local/bin/ch32-info && \
+    echo 'echo ""' >> /usr/local/bin/ch32-info && \
+    echo 'echo "Sysroot location:"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "  xPack:  /opt/xpack-riscv-none-elf-gcc/riscv-none-elf"' >> /usr/local/bin/ch32-info && \
+    echo 'echo ""' >> /usr/local/bin/ch32-info && \
+    echo 'echo "========================================================"' >> /usr/local/bin/ch32-info && \
+    chmod +x /usr/local/bin/ch32-info
+
+CMD ["/bin/bash"]

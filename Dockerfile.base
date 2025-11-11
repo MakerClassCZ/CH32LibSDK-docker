@@ -1,0 +1,210 @@
+# CH32LibSDK Base Development Container
+# Base image with common tools, SDK, and utilities
+# All toolchain-specific images build from this base
+#
+# Features:
+# - Ubuntu 22.04 LTS base
+# - Build tools (cmake, ninja, make, git, etc.)
+# - USB support for WCH devices
+# - OpenOCD + minichlink for programming
+# - CH32LibSDK in /opt/CH32LibSDK
+# - Non-root developer user
+#
+# This image does NOT include any compiler toolchain
+
+FROM ubuntu:22.04
+
+# ============================================================================
+# Build Arguments & Metadata
+# ============================================================================
+
+ARG VERSION
+ARG VCS_REF
+ARG BUILD_DATE
+
+LABEL org.opencontainers.image.title="CH32LibSDK Base Container" \
+      org.opencontainers.image.description="CH32LibSDK Base Development Container" \
+      org.opencontainers.image.source="https://github.com/makerclasscz/CH32LibSDK-docker" \
+      org.opencontainers.image.url="https://github.com/makerclasscz/CH32LibSDK-docker" \
+      org.opencontainers.image.documentation="https://github.com/makerclasscz/CH32LibSDK-docker#readme" \
+      org.opencontainers.image.licenses="MIT" \
+      org.opencontainers.image.vendor="MakerClass.cz" \
+      org.opencontainers.image.authors="Vladimír Smitka <vlada@makerclass.cz>, MakerClass.cz" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${VCS_REF}" \
+      org.opencontainers.image.created="${BUILD_DATE}"
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=Europe/Prague
+
+# ============================================================================
+# Base System Setup
+# ============================================================================
+
+RUN apt-get update && apt-get install -y \
+    # Build tools
+    build-essential \
+    git \
+    wget \
+    curl \
+    tar \
+    gzip \
+    # Development tools
+    cmake \
+    make \
+    ninja-build \
+    python3 \
+    python3-pip \
+    # USB and hardware support
+    libusb-1.0-0-dev \
+    libftdi1-dev \
+    libudev-dev \
+    libhidapi-dev \
+    # LLVM installation deps (needed for clang variants)
+    lsb-release \
+    software-properties-common \
+    gnupg \
+    # Utilities
+    sudo \
+    nano \
+    vim \
+    tree \
+    htop \
+    usbutils \
+    && rm -rf /var/lib/apt/lists/*
+
+# ============================================================================
+# Install OpenOCD (for programming via SWD)
+# ============================================================================
+
+RUN apt-get update && apt-get install -y \
+    openocd \
+    && rm -rf /var/lib/apt/lists/*
+
+
+# ============================================================================
+# Install CH32LibSDK from GitHub
+# ============================================================================
+
+RUN echo "Cloning CH32LibSDK from GitHub..." && \
+    git clone https://github.com/Panda381/CH32LibSDK.git /tmp/CH32LibSDK && \
+    mkdir -p /opt/CH32LibSDK && \
+    echo "Copying SDK folders..." && \
+    cp -r /tmp/CH32LibSDK/_sdk /opt/CH32LibSDK/ && \
+    cp -r /tmp/CH32LibSDK/_lib /opt/CH32LibSDK/ && \
+    cp -r /tmp/CH32LibSDK/_font /opt/CH32LibSDK/ && \
+    cp -r /tmp/CH32LibSDK/_devices /opt/CH32LibSDK/ && \
+    cp -r /tmp/CH32LibSDK/_loader /opt/CH32LibSDK/ && \
+    echo "Copying SDK files..." && \
+    cp /tmp/CH32LibSDK/Makefile2.inc /opt/CH32LibSDK/ && \
+    cp /tmp/CH32LibSDK/global.h /opt/CH32LibSDK/ && \
+    cp /tmp/CH32LibSDK/includes.h /opt/CH32LibSDK/ && \
+    cp /tmp/CH32LibSDK/Makefile1.inc /opt/CH32LibSDK/ && \
+    cp /tmp/CH32LibSDK/memmap_global.ld /opt/CH32LibSDK/ && \
+    cp /tmp/CH32LibSDK/memmap.ld /opt/CH32LibSDK/ && \
+    rm -rf /tmp/CH32LibSDK && \
+    echo "✓ CH32LibSDK installed to /opt/CH32LibSDK/"
+
+# Copy LLD linker script (for Clang builds)
+COPY memmap-lld.ld /opt/CH32LibSDK/
+
+# Copy CMake toolchain files to universal location
+COPY cmake-toolchains /opt/cmake-toolchains
+
+# Verify SDK structure
+RUN echo "=== CH32LibSDK Structure ===" && \
+    tree -L 2 /opt/CH32LibSDK && \
+    echo "=============================" && \
+    echo "=== CMake Toolchains ===" && \
+    ls -la /opt/cmake-toolchains/ && \
+    echo "========================"
+
+# ============================================================================
+# Install ch32v003fun (alternative SDK + examples + minichlink)
+# ============================================================================
+
+RUN echo "Cloning ch32v003fun repository..." && \
+    git clone https://github.com/cnlohr/ch32v003fun.git /opt/ch32v003fun && \
+    echo "✓ ch32v003fun cloned to /opt/ch32v003fun"
+
+# Build and install minichlink
+RUN echo "Building minichlink..." && \
+    cd /opt/ch32v003fun/minichlink && \
+    make && \
+    cp minichlink /usr/local/bin/ && \
+    chmod +x /usr/local/bin/minichlink && \
+    echo "✓ minichlink installed to /usr/local/bin/"
+
+# Verify minichlink
+RUN minichlink --version || echo "minichlink installed (no version flag)"
+
+# Verify ch32v003fun structure
+RUN echo "=== ch32v003fun Structure ===" && \
+    tree -L 2 /opt/ch32v003fun && \
+    echo "=============================="
+
+# ============================================================================
+# Environment Configuration
+# ============================================================================
+
+# SDK paths (available to all derived images)
+ENV CH32_SDK_PATH="/opt/CH32LibSDK"
+ENV CMAKE_TOOLCHAIN_PATH="/opt/cmake-toolchains"
+ENV CH32V003FUN_PATH="/opt/ch32v003fun"
+
+# ============================================================================
+# User Setup
+# ============================================================================
+
+# Create non-root user for development
+RUN useradd -m -s /bin/bash developer && \
+    echo "developer ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+
+# ============================================================================
+# USB Device Permissions
+# ============================================================================
+
+# Add udev rules for WCH devices
+RUN mkdir -p /etc/udev/rules.d && \
+    echo '# WCH CH32V USB devices' > /etc/udev/rules.d/99-wch.rules && \
+    echo 'SUBSYSTEM=="usb", ATTR{idVendor}=="1a86", MODE="0666"' >> /etc/udev/rules.d/99-wch.rules && \
+    cat /etc/udev/rules.d/99-wch.rules
+
+# ============================================================================
+# Working Directory
+# ============================================================================
+
+WORKDIR /workspace
+
+# ============================================================================
+# Info Message
+# ============================================================================
+
+RUN echo '#!/bin/bash' > /usr/local/bin/ch32-info && \
+    echo 'echo "========================================"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "CH32LibSDK Base Container"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "========================================"' >> /usr/local/bin/ch32-info && \
+    echo 'echo ""' >> /usr/local/bin/ch32-info && \
+    echo 'echo "This is the base image. Use a toolchain-specific image:"' >> /usr/local/bin/ch32-info && \
+    echo 'echo ""' >> /usr/local/bin/ch32-info && \
+    echo 'echo "Available toolchain images:"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "  makerclasscz/ch32libsdk:gcc-wch"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "  makerclasscz/ch32libsdk:clang-libgcc"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "  makerclasscz/ch32libsdk:clang-compiler-rt"' >> /usr/local/bin/ch32-info && \
+    echo 'echo ""' >> /usr/local/bin/ch32-info && \
+    echo 'echo "Installed SDKs:"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "  CH32LibSDK:   /opt/CH32LibSDK"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "  ch32v003fun:  /opt/ch32v003fun (+ examples)"' >> /usr/local/bin/ch32-info && \
+    echo 'echo ""' >> /usr/local/bin/ch32-info && \
+    echo 'echo "CMake toolchains: /opt/cmake-toolchains"' >> /usr/local/bin/ch32-info && \
+    echo 'echo ""' >> /usr/local/bin/ch32-info && \
+    echo 'echo "Available tools:"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "  minichlink  - Fast WCH programmer"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "  openocd     - OpenOCD programmer"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "  cmake       - CMake build system"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "  ninja       - Ninja build system"' >> /usr/local/bin/ch32-info && \
+    echo 'echo ""' >> /usr/local/bin/ch32-info && \
+    echo 'echo "========================================"' >> /usr/local/bin/ch32-info && \
+    chmod +x /usr/local/bin/ch32-info
+
+CMD ["/bin/bash"]

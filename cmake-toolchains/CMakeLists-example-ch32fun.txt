@@ -1,0 +1,139 @@
+# ============================================================================
+# Example CMakeLists.txt for ch32v003fun Projects
+# ============================================================================
+#
+# This is a template/example for building CH32 projects with ch32v003fun SDK.
+# Copy this file to your project directory and rename it to CMakeLists.txt
+#
+# ch32v003fun: Minimalist SDK with direct hardware access
+# Repository: https://github.com/cnlohr/ch32v003fun
+#
+# Usage:
+#   1. Copy to your project: cp CMakeLists-example-ch32fun.txt myproject/CMakeLists.txt
+#   2. Edit TARGET_NAME and PROJECT_SOURCES
+#   3. Build:
+#      cmake -B build -DCMAKE_TOOLCHAIN_FILE=/opt/cmake-toolchains/toolchain-ch32fun.cmake
+#      cmake --build build
+#
+# Alternative: Use ch32v003fun Makefile examples directly:
+#   cd /opt/ch32v003fun/examples/blink
+#   make
+#   minichlink -w blink.bin
+#
+# ============================================================================
+
+cmake_minimum_required(VERSION 3.15)
+
+# ============================================================================
+# Project Configuration
+# ============================================================================
+
+set(TARGET_NAME "main")                 # Output binary name (without .elf)
+
+# Project source files - ADD YOUR SOURCE FILES HERE
+set(PROJECT_SOURCES
+    main.c
+    # Add more source files as needed
+)
+
+# ch32v003fun configuration
+set(CH32FUN_USE_LTO ON)                # Link Time Optimization (recommended)
+
+# ============================================================================
+# Toolchain and Project Setup
+# ============================================================================
+
+# Use ch32v003fun toolchain
+set(CMAKE_TOOLCHAIN_FILE "/opt/cmake-toolchains/toolchain-ch32fun.cmake")
+
+project(ch32fun_project C ASM)
+
+# ============================================================================
+# ch32v003fun SDK Configuration
+# ============================================================================
+
+set(CH32FUN_PATH $ENV{CH32V003FUN_PATH})
+
+if(NOT EXISTS "${CH32FUN_PATH}")
+    message(FATAL_ERROR "ch32v003fun not found. CH32V003FUN_PATH should be set to /opt/ch32v003fun")
+endif()
+
+# Include ch32v003fun headers (set by toolchain, but explicit for clarity)
+include_directories(
+    ${CH32FUN_PATH}/ch32v003fun
+    ${CH32FUN_PATH}/ch32v003fun/extralibs
+)
+
+# ch32v003fun core library source
+set(CH32FUN_CORE_SRC
+    ${CH32FUN_PATH}/ch32v003fun/ch32v003fun.c
+)
+
+# ============================================================================
+# Compiler and Linker Flags
+# ============================================================================
+
+# Compiler flags (optimized for ch32v003fun)
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Os -flto -ffunction-sections -fdata-sections")
+
+# Linker flags
+set(LINKER_SCRIPT "${CH32FUN_PATH}/ch32v003fun/ch32v003fun.ld")
+set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -T${LINKER_SCRIPT} -Wl,--gc-sections -flto -nostdlib")
+
+# ============================================================================
+# Build Target
+# ============================================================================
+
+# Create executable
+add_executable(${TARGET_NAME}.elf
+    ${PROJECT_SOURCES}
+    ${CH32FUN_CORE_SRC}
+)
+
+# Link options
+target_link_options(${TARGET_NAME}.elf PRIVATE
+    -Wl,-Map=${TARGET_NAME}.map
+)
+
+# Generate additional output formats
+add_custom_command(TARGET ${TARGET_NAME}.elf POST_BUILD
+    COMMAND ${CMAKE_OBJCOPY} -O ihex ${TARGET_NAME}.elf ${TARGET_NAME}.hex
+    COMMAND ${CMAKE_OBJCOPY} -O binary ${TARGET_NAME}.elf ${TARGET_NAME}.bin
+    COMMAND ${CMAKE_SIZE} ${TARGET_NAME}.elf
+    COMMENT "Generating hex and bin files, showing size..."
+)
+
+# ============================================================================
+# Flash target (using minichlink)
+# ============================================================================
+
+add_custom_target(flash
+    COMMAND minichlink -w ${TARGET_NAME}.bin flash -b
+    DEPENDS ${TARGET_NAME}.elf
+    COMMENT "Flashing ${TARGET_NAME}.bin to MCU using minichlink..."
+)
+
+# ============================================================================
+# Example main.c for ch32v003fun
+# ============================================================================
+#
+# #include "ch32v003fun.h"
+# #include <stdio.h>
+#
+# int main() {
+#     SystemInit();
+#
+#     // Enable GPIOD and configure PC0 as output
+#     RCC->APB2PCENR |= RCC_APB2Periph_GPIOD;
+#     GPIOD->CFGLR &= ~(0xf<<(4*0));
+#     GPIOD->CFGLR |= (GPIO_Speed_10MHz | GPIO_CNF_OUT_PP)<<(4*0);
+#
+#     while(1) {
+#         GPIOD->BSHR = (1<<0);   // Set PC0 high
+#         Delay_Ms(500);
+#         GPIOD->BSHR = (1<<16);  // Set PC0 low
+#         Delay_Ms(500);
+#     }
+# }
+#
+# ============================================================================
