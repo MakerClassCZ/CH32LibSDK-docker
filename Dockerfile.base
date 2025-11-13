@@ -189,6 +189,7 @@ RUN echo '#!/bin/bash' > /usr/local/bin/ch32-info && \
     echo 'echo ""' >> /usr/local/bin/ch32-info && \
     echo 'echo "Available toolchain images:"' >> /usr/local/bin/ch32-info && \
     echo 'echo "  makerclasscz/ch32libsdk:gcc-wch"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "  makerclasscz/ch32libsdk:gcc-native"' >> /usr/local/bin/ch32-info && \
     echo 'echo "  makerclasscz/ch32libsdk:clang-libgcc"' >> /usr/local/bin/ch32-info && \
     echo 'echo "  makerclasscz/ch32libsdk:clang-compiler-rt"' >> /usr/local/bin/ch32-info && \
     echo 'echo ""' >> /usr/local/bin/ch32-info && \

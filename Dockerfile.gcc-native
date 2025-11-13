@@ -1,0 +1,124 @@
+# CH32LibSDK Development Container - GCC Native Toolchain
+# Standard RISC-V GCC without WCH proprietary extensions
+#
+# Features:
+# - xPack RISC-V GCC 14.2.0 (standard RISC-V, no XW extensions)
+# - Target: rv32ec (standard C extension) or rv32emc (with M extension)
+# - Inherits base system, SDK, and tools from base image
+# - Size: base + ~250 MB (toolchain)
+#
+# Build from: ch32libsdk:base
+
+FROM ch32libsdk:base
+
+# ============================================================================
+# Build Arguments & Metadata
+# ============================================================================
+
+ARG VERSION
+ARG VCS_REF
+ARG BUILD_DATE
+
+LABEL org.opencontainers.image.title="CH32LibSDK GCC Native Container" \
+      org.opencontainers.image.description="CH32LibSDK with xPack RISC-V GCC 14.2.0 (standard RISC-V)" \
+      org.opencontainers.image.source="https://github.com/makerclasscz/CH32LibSDK-docker" \
+      org.opencontainers.image.url="https://github.com/makerclasscz/CH32LibSDK-docker" \
+      org.opencontainers.image.documentation="https://github.com/makerclasscz/CH32LibSDK-docker#readme" \
+      org.opencontainers.image.licenses="MIT" \
+      org.opencontainers.image.vendor="MakerClass.cz" \
+      org.opencontainers.image.authors="Vladimír Smitka <vlada@makerclass.cz>, MakerClass.cz" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${VCS_REF}" \
+      org.opencontainers.image.created="${BUILD_DATE}" \
+      toolchain="gcc-native-14.2.0"
+
+# ============================================================================
+# Install xPack RISC-V GCC (Standard RISC-V, no WCH extensions)
+# ============================================================================
+
+# Download and install xPack RISC-V GCC 14.2.0-3
+RUN echo "Installing xPack RISC-V GCC 14.2.0-3..." && \
+    wget -q -O /tmp/xpack-riscv-gcc.tar.gz \
+        https://github.com/xpack-dev-tools/riscv-none-elf-gcc-xpack/releases/download/v14.2.0-3/xpack-riscv-none-elf-gcc-14.2.0-3-linux-x64.tar.gz && \
+    mkdir -p /opt/riscv-gcc && \
+    tar -xzf /tmp/xpack-riscv-gcc.tar.gz -C /opt/riscv-gcc --strip-components=1 && \
+    rm /tmp/xpack-riscv-gcc.tar.gz && \
+    echo "✓ xPack RISC-V GCC installed to /opt/riscv-gcc"
+
+# Verify toolchain installation and multilib support
+RUN echo "=== xPack RISC-V GCC Verification ===" && \
+    /opt/riscv-gcc/bin/riscv-none-elf-gcc --version | head -1 && \
+    echo "--- Available multilibs ---" && \
+    /opt/riscv-gcc/bin/riscv-none-elf-gcc -print-multi-lib && \
+    echo "--- Checking rv32ec/ilp32e support ---" && \
+    /opt/riscv-gcc/bin/riscv-none-elf-gcc -print-multi-lib | grep rv32ec && \
+    echo "✓ rv32ec/ilp32e multilib verified" && \
+    echo "==================================="
+
+# ============================================================================
+# Fix SDK for Standard RISC-V GCC (Interrupt Handler Compatibility)
+# ============================================================================
+
+# Fix interrupt handler attribute in global.h for standard RISC-V GCC
+# WCH GCC uses "WCH-Interrupt-fast" which is not recognized by standard GCC 14.2.0
+RUN sed -i 's/#define HANDLER __attribute__((interrupt("WCH-Interrupt-fast")))/#define HANDLER __attribute__((interrupt))/g' \
+    /opt/CH32LibSDK/global.h && \
+    echo "✓ Fixed interrupt handler attribute for standard RISC-V GCC"
+
+# ============================================================================
+# Environment Configuration
+# ============================================================================
+
+# Add toolchain to PATH
+ENV PATH="/opt/riscv-gcc/bin:${PATH}"
+
+# Toolchain identifier for CMake (overrides base)
+ENV CH32_TOOLCHAIN="GCC_NATIVE"
+
+# GCC specific paths
+ENV GCC_CH32_PATH="/opt/riscv-gcc/bin"
+ENV GCC_CH32_SYSROOT="/opt/riscv-gcc/riscv-none-elf"
+
+# Standard compiler environment variables
+ENV CC="/opt/riscv-gcc/bin/riscv-none-elf-gcc"
+ENV CXX="/opt/riscv-gcc/bin/riscv-none-elf-g++"
+ENV AR="/opt/riscv-gcc/bin/riscv-none-elf-ar"
+ENV OBJCOPY="/opt/riscv-gcc/bin/riscv-none-elf-objcopy"
+ENV OBJDUMP="/opt/riscv-gcc/bin/riscv-none-elf-objdump"
+ENV SIZE="/opt/riscv-gcc/bin/riscv-none-elf-size"
+
+# CMake toolchain file for this variant
+ENV CH32_CMAKE_TOOLCHAIN="/opt/cmake-toolchains/toolchain-gcc-native.cmake"
+
+# ============================================================================
+# Info Message (override base)
+# ============================================================================
+
+RUN echo '#!/bin/bash' > /usr/local/bin/ch32-info && \
+    echo 'echo "========================================"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "CH32LibSDK - GCC Native Toolchain"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "========================================"' >> /usr/local/bin/ch32-info && \
+    echo 'echo ""' >> /usr/local/bin/ch32-info && \
+    echo 'echo "Toolchain: xPack RISC-V GCC 14.2.0"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "Target: RISC-V rv32ec (ilp32e ABI)"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "ISA: Standard RISC-V (no WCH XW extensions)"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "SDK: $CH32_SDK_PATH"' >> /usr/local/bin/ch32-info && \
+    echo 'echo ""' >> /usr/local/bin/ch32-info && \
+    echo 'echo "Available commands:"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "  riscv-none-elf-gcc   - GCC compiler"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "  riscv-none-elf-g++   - G++ compiler"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "  minichlink           - Fast WCH programmer"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "  openocd              - OpenOCD programmer"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "  cmake                - CMake build system"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "  ninja                - Ninja build system"' >> /usr/local/bin/ch32-info && \
+    echo 'echo ""' >> /usr/local/bin/ch32-info && \
+    echo 'echo "Toolchain file:"' >> /usr/local/bin/ch32-info && \
+    echo 'echo "  $CMAKE_TOOLCHAIN_PATH/toolchain-gcc-native.cmake"' >> /usr/local/bin/ch32-info && \
+    echo 'echo ""' >> /usr/local/bin/ch32-info && \
+    echo 'echo "This is the standard RISC-V GCC toolchain."' >> /usr/local/bin/ch32-info && \
+    echo 'echo "Compatible with ch32fun and other universal RISC-V projects."' >> /usr/local/bin/ch32-info && \
+    echo 'echo ""' >> /usr/local/bin/ch32-info && \
+    echo 'echo "========================================"' >> /usr/local/bin/ch32-info && \
+    chmod +x /usr/local/bin/ch32-info
+
+CMD ["/bin/bash"]
